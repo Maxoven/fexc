@@ -21,8 +21,17 @@ APP_PASSWORD_HASH = generate_password_hash(os.environ.get('APP_PASSWORD', 'chang
 
 def get_db_connection():
     """Подключение к PostgreSQL базе данных Aiven"""
-    conn = psycopg2.connect(os.environ.get('DATABASE_URL'))
-    return conn
+    database_url = os.environ.get('DATABASE_URL')
+    if not database_url:
+        raise Exception("DATABASE_URL environment variable is not set")
+    
+    try:
+        conn = psycopg2.connect(database_url)
+        return conn
+    except psycopg2.OperationalError as e:
+        print(f"Database connection error: {e}")
+        print(f"Attempting to connect to: {database_url.split('@')[1] if '@' in database_url else 'unknown'}")
+        raise
 
 def init_db():
     """Инициализация базы данных"""
@@ -53,8 +62,21 @@ def index():
     # Получение списка файлов
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute('SELECT id, original_filename, upload_date, file_size FROM files ORDER BY upload_date DESC')
-    files = cur.fetchall()
+    
+    # Автоматическая инициализация таблицы если её нет
+    try:
+        cur.execute('SELECT id, original_filename, upload_date, file_size FROM files ORDER BY upload_date DESC')
+        files = cur.fetchall()
+    except psycopg2.errors.UndefinedTable:
+        # Таблица не существует - создаём её
+        conn.rollback()
+        init_db()
+        # Пробуем снова
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('SELECT id, original_filename, upload_date, file_size FROM files ORDER BY upload_date DESC')
+        files = cur.fetchall()
+    
     cur.close()
     conn.close()
     
